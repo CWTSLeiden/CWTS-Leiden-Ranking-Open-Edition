@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: "software"
+authors:
+  - family-names: "Van Eck"
+    given-names: "Nees Jan"
+    orcid: "https://orcid.org/0000-0001-8448-4521"
+    email: "ecknjpvan@cwts.leidenuniv.nl"
+    affiliation: "Centre for Science and Technology Studies (CWTS), Leiden University"
+title: "CWTS-Leiden-Ranking-Open-Edition"
+abstract: "This repository contains the source code used by CWTS to create the Open Edition of the CWTS Leiden Ranking."
+keywords:
+  - bibliometrics
+  - Centre for Science and Technology Studies
+  - CWTS
+  - collaboration
+  - Leiden Ranking
+  - OpenAlex
+  - open access
+  - SQL
+  - scientific impact
+  - university performance
+  - university ranking
+url: "https://github.com/CWTSLeiden/CWTS-Leiden-Ranking-Open-Edition#readme"
+repository-code: "https://github.com/CWTSLeiden/CWTS-Leiden-Ranking-Open-Edition"
+license: MIT
+version: 2023
+date-released: 2024-01-30
