@@ -555,7 +555,7 @@ left join #pub_n_countries as c on a.work_id = c.work_id
 drop table if exists #pub_oa
 select
 	a.work_id,
-	p_gold_oa = cast((case when c.oa_status = 'gold' then 1 else 0 end) as float),
+	p_gold_oa = cast((case when c.oa_status in ('gold', 'diamond') then 1 else 0 end) as float),
 	p_hybrid_oa = cast((case when c.oa_status = 'hybrid' then 1 else 0 end) as float),
 	p_bronze_oa = cast((case when c.oa_status = 'bronze' then 1 else 0 end) as float),
 	p_green_oa = cast((case when c.oa_status = 'green' then 1 else 0 end) as float),
