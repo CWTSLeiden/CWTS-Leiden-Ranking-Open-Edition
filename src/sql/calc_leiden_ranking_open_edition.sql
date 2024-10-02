@@ -154,61 +154,96 @@ alter table pub add constraint pk_pub primary key(work_id)
 
 -- Link publications to institutions and calculate the weight of linked institutions based on the number of affiliated authors.
 
-drop table if exists #pub_n_authors
-select a.work_id, n_authors = count(*)
-into #pub_n_authors
+drop table if exists #pub_author
+select a.work_id, a.author_seq
+into #pub_author
 from openalex_2024aug..work_author as a
 join pub as b on a.work_id = b.work_id
-group by a.work_id
 
-drop table if exists #pub_author_n_author_institutions
-select a.work_id, a.author_seq, n_author_institutions = count(*)
-into #pub_author_n_author_institutions
-from openalex_2024aug..work_author_institution as a
+drop table if exists #pub_n_authors
+select work_id, n_authors = count(*)
+into #pub_n_authors
+from #pub_author
+group by work_id
+
+drop table if exists #pub_author_n_affiliations
+select a.work_id, a.author_seq, n_affiliations = count(*)
+into #pub_author_n_affiliations
+from openalex_2024aug..work_author_affiliation as a
 join pub as b on a.work_id = b.work_id
 group by a.work_id, a.author_seq
 
-drop table if exists #pub_author_institution
-select a.work_id, a.author_seq, a.institution_seq, [weight] = (cast(1 as float) / b.n_author_institutions) * (cast(1 as float) / c.n_authors)
-into #pub_author_institution
-from openalex_2024aug..work_author_institution as a
-join #pub_author_n_author_institutions as b on a.work_id = b.work_id and a.author_seq = b.author_seq
+drop table if exists #pub_author_affiliation
+select a.work_id, a.author_seq, a.affiliation_seq, [weight] = cast(1 as float) / b.n_affiliations
+into #pub_author_affiliation
+from openalex_2024aug..work_author_affiliation as a
+join #pub_author_n_affiliations as b on a.work_id = b.work_id and a.author_seq = b.author_seq
+
+drop table if exists #pub_affiliation_n_authors
+select work_id, affiliation_seq, n_authors = sum([weight])
+into #pub_affiliation_n_authors
+from #pub_author_affiliation
+group by work_id, affiliation_seq
+
+-- Check if the weights add up to the expected value.
+if abs((select sum(n_authors) from #pub_affiliation_n_authors) - (select count(*) from #pub_author_n_affiliations)) > 0.001
+begin
+	raiserror('Unexpected total weight.', 2, 1)
+end
+
+drop table if exists #pub_affiliation
+select a.work_id, a.affiliation_seq, [weight] = cast(b.n_authors as float) / c.n_authors
+into #pub_affiliation
+from openalex_2024aug..work_affiliation as a
+join #pub_affiliation_n_authors as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
 join #pub_n_authors as c on a.work_id = c.work_id
 
-drop table if exists #pub_author_institution2
-select work_id, author_seq, institution_seq, [weight]
-into #pub_author_institution2
-from #pub_author_institution
-union all
-select a.work_id, a.author_seq, institution_seq = null, [weight] = cast(1 as float) / b.n_authors
-from openalex_2024aug..work_author as a
-join #pub_n_authors as b on a.work_id = b.work_id
-left join
-(
-	select distinct work_id, author_seq
-	from #pub_author_institution
-) as c on a.work_id = c.work_id and a.author_seq = c.author_seq
-where c.work_id is null
+drop table if exists #pub_affiliation_n_institutions
+select a.work_id, a.affiliation_seq, n_institutions = count(*)
+into #pub_affiliation_n_institutions
+from openalex_2024aug..work_affiliation_institution as a
+join pub as b on a.work_id = b.work_id
+group by a.work_id, a.affiliation_seq
 
--- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_author_institution2) - (select count(*) from pub)) > 0.001
-begin
-	raiserror('Unexpected total weight.', 2, 1)
-end
+drop table if exists #pub_affiliation_institution
+select a.work_id, a.affiliation_seq, a.institution_seq, a.institution_id, [weight] = cast(1 as float) / b.n_institutions
+into #pub_affiliation_institution
+from openalex_2024aug..work_affiliation_institution as a
+join #pub_affiliation_n_institutions as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+
+drop table if exists #pub_affiliation_institution2
+select work_id, affiliation_seq, institution_seq, affiliation_institution_seq = row_number() over (partition by work_id order by affiliation_seq, institution_seq), institution_id, [weight]
+into #pub_affiliation_institution2
+from
+(
+	select work_id, affiliation_seq, institution_seq, institution_id, [weight]
+	from #pub_affiliation_institution
+	union all
+	select a.work_id, a.affiliation_seq, b.institution_seq, b.institution_id, [weight] = cast(1 as float)
+	from #pub_affiliation as a
+	left join #pub_affiliation_institution as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+	where b.work_id is null
+) as a
 
 drop table if exists #pub_institution
-select a.work_id, a.institution_seq, c.institution_id, institution_ror_id = c.ror_id, [weight] = sum([weight])
+select a.work_id, institution_seq = row_number() over (partition by a.work_id order by min(affiliation_institution_seq)), a.institution_id, [weight] = sum(a.[weight] * b.[weight])
 into #pub_institution
-from #pub_author_institution as a
-join openalex_2024aug..work_institution as b on a.work_id = b.work_id and a.institution_seq = b.institution_seq
-join openalex_2024aug..institution as c on b.institution_id = c.institution_id
-group by a.work_id, a.institution_seq, c.institution_id, c.ror_id
+from #pub_affiliation_institution2 as a
+join #pub_affiliation as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+group by a.work_id, a.institution_id
 
 -- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_institution) - (select sum([weight]) from #pub_author_institution)) > 0.001
+if abs((select sum([weight]) from #pub_institution) - (select sum([weight]) from #pub_affiliation)) > 0.001
 begin
 	raiserror('Unexpected total weight.', 2, 1)
 end
+
+drop table if exists #pub_institution2
+select a.work_id, a.institution_seq, a.institution_id, institution_ror_id = b.ror_id, a.[weight]
+into #pub_institution2
+from #pub_institution as a
+join openalex_2024aug..institution as b on a.institution_id = b.institution_id
+where b.ror_id is not null
 
 
 
@@ -232,7 +267,7 @@ where relation_type in ('component', 'joint')
 drop table if exists #pub_unified_institution_child_organizations
 select a.work_id, a.institution_seq, b.unified_institution_ror_id, [weight] = a.[weight] * b.[weight]
 into #pub_unified_institution_child_organizations
-from #pub_institution as a
+from #pub_institution2 as a
 join #unified_institution_child_organizations as b on a.institution_ror_id = b.institution_ror_id
 
 
@@ -250,7 +285,7 @@ where relation_type = 'associated'
 drop table if exists #pub_unified_institution_associated_organizations
 select a.work_id, a.institution_seq, b.unified_institution_ror_id, [weight] = a.[weight]
 into #pub_unified_institution_associated_organizations
-from #pub_institution as a
+from #pub_institution2 as a
 join #unified_institution_associated_organizations as b on a.institution_ror_id = b.institution_ror_id
 join
 (
@@ -289,7 +324,7 @@ select
 	unified_institution_ror_id = isnull(b.unified_institution_ror_id, a.institution_ror_id),
 	[weight] = isnull(b.[weight], a.[weight])
 into #pub_unified_institution
-from #pub_institution as a
+from #pub_institution2 as a
 left join
 (
 	select work_id, institution_seq, unified_institution_ror_id, [weight]
@@ -300,7 +335,7 @@ left join
 ) as b on a.work_id = b.work_id and a.institution_seq = b.institution_seq
 
 -- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_unified_institution) - (select sum([weight]) from #pub_institution)) > 0.001
+if abs((select sum([weight]) from #pub_unified_institution) - (select sum([weight]) from #pub_institution2)) > 0.001
 begin
 	raiserror('Unexpected total weight.', 2, 1)
 end
@@ -511,12 +546,11 @@ from openalex_2024aug..country
 where country_iso_alpha2_code in ('cn', 'hk', 'mo')  -- China, Hong Kong, Macao
 
 drop table if exists #pub_country
-select a.work_id, d.cleaned_country_iso_alpha2_code
+select a.work_id, c.cleaned_country_iso_alpha2_code
 into #pub_country
-from pub as a
-join openalex_2024aug..work_institution as b on a.work_id = b.work_id
-join openalex_2024aug..institution as c on b.institution_id = c.institution_id
-join #country as d on c.country_iso_alpha2_code = d.country_iso_alpha2_code
+from #pub_institution2 as a
+join openalex_2024aug..institution as b on a.institution_id = b.institution_id
+join #country as c on b.country_iso_alpha2_code = c.country_iso_alpha2_code
 union
 select a.work_id, c.cleaned_country_iso_alpha2_code
 from pub as a
