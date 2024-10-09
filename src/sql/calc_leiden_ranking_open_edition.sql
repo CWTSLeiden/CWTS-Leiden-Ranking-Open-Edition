@@ -1,9 +1,9 @@
-use leiden_ranking_open_edition_2023
+use leiden_ranking_open_edition_2024
 go
 
 declare @period_n_years int = 4
 declare @first_period_begin_year int = 2006
-declare @last_period_begin_year int = 2018
+declare @last_period_begin_year int = 2019
 declare @last_period_end_year int = @last_period_begin_year + @period_n_years - 1
 
 
@@ -14,7 +14,7 @@ drop table if exists university
 create table university
 (
 	university_id int not null,
-	university nvarchar(50) not null,
+	university nvarchar(60) not null,
 	university_full_name nvarchar(70) not null,
 	ror_id char(9) not null,
 	ror_name nvarchar(70) not null,
@@ -30,14 +30,13 @@ select
 	a.university,
 	a.university_full_name,
 	b.ror_id,
-	ror_name = b.organization_name,
+	ror_name = b.organization,
 	a.country_code,
 	a.latitude,
 	a.longitude,
 	a.is_mtor_university
-from projectdb_leiden_ranking_open_edition..LROE2023_university_20240119 as a
-join ror_2023nov..organization as b on a.ror_id = b.ror_id
---1411
+from projectdb_leiden_ranking_open_edition..LROE2024_university_20240923 as a
+join ror_2024aug..organization as b on a.ror_id = b.ror_id
 
 alter table university add constraint pk_university primary key(university_id)
 
@@ -60,10 +59,9 @@ select distinct
 	a.relation_type,
 	a.affiliated_organization_ror_id,
 	a.affiliated_organization_weight
-from projectdb_leiden_ranking_open_edition..LROE2023_university_affiliated_organization_20240119 as a
-join ror_2023nov..organization as b on a.affiliated_organization_ror_id = b.ror_id
+from projectdb_leiden_ranking_open_edition..LROE2024_university_affiliated_organization_20240923 as a
+join ror_2024aug..organization as b on a.affiliated_organization_ror_id = b.ror_id
 where a.ror_id <> a.affiliated_organization_ror_id
---5062
 
 alter table university_affiliated_organization add constraint pk_university_affiliated_organization primary key(university_ror_id, affiliated_organization_ror_id)
 
@@ -79,14 +77,13 @@ create table affiliated_organization
 )
 
 insert into affiliated_organization with(tablock)
-select a.ror_id, ror_name = b.organization_name
+select a.ror_id, ror_name = b.organization
 from
 (
 	select distinct ror_id = affiliated_organization_ror_id
 	from university_affiliated_organization
 ) as a
-join ror_2023nov..organization as b on a.ror_id = b.ror_id
---4304
+join ror_2024aug..organization as b on a.ror_id = b.ror_id
 
 alter table affiliated_organization add constraint pk_affiliated_organization primary key(ror_id)
 
@@ -125,12 +122,10 @@ create table main_field
 
 insert into main_field with(tablock)
 select 0, 'All sciences'
---1
 
 insert into main_field with(tablock)
 select main_field_id, main_field
-from openalex_2023nov_classification..main_field
---5
+from openalex_2024aug_classification..main_field
 
 alter table main_field add constraint pk_main_field primary key(main_field_id)
 
@@ -147,12 +142,11 @@ create table pub
 
 insert into pub with(tablock)
 select a.work_id, a.pub_year
-from openalex_2023nov..work as a
-join openalex_2023nov_core..work as b on a.work_id = b.work_id
+from openalex_2024aug..work as a
+join openalex_2024aug_core..work as b on a.work_id = b.work_id
 where a.pub_year between @first_period_begin_year and @last_period_end_year
 	and b.is_core_work = 1  -- Core publication.
 	and a.is_retracted = 0  -- Not retracted.
---26603958
 
 alter table pub add constraint pk_pub primary key(work_id)
 
@@ -160,66 +154,96 @@ alter table pub add constraint pk_pub primary key(work_id)
 
 -- Link publications to institutions and calculate the weight of linked institutions based on the number of affiliated authors.
 
-drop table if exists #pub_n_authors
-select a.work_id, n_authors = count(*)
-into #pub_n_authors
-from openalex_2023nov..work_author as a
+drop table if exists #pub_author
+select a.work_id, a.author_seq
+into #pub_author
+from openalex_2024aug..work_author as a
 join pub as b on a.work_id = b.work_id
-group by a.work_id
---26603958
 
-drop table if exists #pub_author_n_author_institutions
-select a.work_id, a.author_seq, n_author_institutions = count(*)
-into #pub_author_n_author_institutions
-from openalex_2023nov..work_author_institution as a
+drop table if exists #pub_n_authors
+select work_id, n_authors = count(*)
+into #pub_n_authors
+from #pub_author
+group by work_id
+
+drop table if exists #pub_author_n_affiliations
+select a.work_id, a.author_seq, n_affiliations = count(*)
+into #pub_author_n_affiliations
+from openalex_2024aug..work_author_affiliation as a
 join pub as b on a.work_id = b.work_id
 group by a.work_id, a.author_seq
---119980163
 
-drop table if exists #pub_author_institution
-select a.work_id, a.author_seq, a.institution_seq, [weight] = (cast(1 as float) / b.n_author_institutions) * (cast(1 as float) / c.n_authors)
-into #pub_author_institution
-from openalex_2023nov..work_author_institution as a
-join #pub_author_n_author_institutions as b on a.work_id = b.work_id and a.author_seq = b.author_seq
-join #pub_n_authors as c on a.work_id = c.work_id
---160665348
+drop table if exists #pub_author_affiliation
+select a.work_id, a.author_seq, a.affiliation_seq, [weight] = cast(1 as float) / b.n_affiliations
+into #pub_author_affiliation
+from openalex_2024aug..work_author_affiliation as a
+join #pub_author_n_affiliations as b on a.work_id = b.work_id and a.author_seq = b.author_seq
 
-drop table if exists #pub_author_institution2
-select work_id, author_seq, institution_seq, [weight]
-into #pub_author_institution2
-from #pub_author_institution
-union all
-select a.work_id, a.author_seq, institution_seq = null, [weight] = cast(1 as float) / b.n_authors
-from openalex_2023nov..work_author as a
-join #pub_n_authors as b on a.work_id = b.work_id
-left join
-(
-	select distinct work_id, author_seq
-	from #pub_author_institution
-) as c on a.work_id = c.work_id and a.author_seq = c.author_seq
-where c.work_id is null
---168904339
+drop table if exists #pub_affiliation_n_authors
+select work_id, affiliation_seq, n_authors = sum([weight])
+into #pub_affiliation_n_authors
+from #pub_author_affiliation
+group by work_id, affiliation_seq
 
 -- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_author_institution2) - (select count(*) from pub)) > 0.001
+if abs((select sum(n_authors) from #pub_affiliation_n_authors) - (select count(*) from #pub_author_n_affiliations)) > 0.001
 begin
 	raiserror('Unexpected total weight.', 2, 1)
 end
+
+drop table if exists #pub_affiliation
+select a.work_id, a.affiliation_seq, [weight] = cast(b.n_authors as float) / c.n_authors
+into #pub_affiliation
+from openalex_2024aug..work_affiliation as a
+join #pub_affiliation_n_authors as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+join #pub_n_authors as c on a.work_id = c.work_id
+
+drop table if exists #pub_affiliation_n_institutions
+select a.work_id, a.affiliation_seq, n_institutions = count(*)
+into #pub_affiliation_n_institutions
+from openalex_2024aug..work_affiliation_institution as a
+join pub as b on a.work_id = b.work_id
+group by a.work_id, a.affiliation_seq
+
+drop table if exists #pub_affiliation_institution
+select a.work_id, a.affiliation_seq, a.institution_seq, a.institution_id, [weight] = cast(1 as float) / b.n_institutions
+into #pub_affiliation_institution
+from openalex_2024aug..work_affiliation_institution as a
+join #pub_affiliation_n_institutions as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+
+drop table if exists #pub_affiliation_institution2
+select work_id, affiliation_seq, institution_seq, affiliation_institution_seq = row_number() over (partition by work_id order by affiliation_seq, institution_seq), institution_id, [weight]
+into #pub_affiliation_institution2
+from
+(
+	select work_id, affiliation_seq, institution_seq, institution_id, [weight]
+	from #pub_affiliation_institution
+	union all
+	select a.work_id, a.affiliation_seq, b.institution_seq, b.institution_id, [weight] = cast(1 as float)
+	from #pub_affiliation as a
+	left join #pub_affiliation_institution as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+	where b.work_id is null
+) as a
 
 drop table if exists #pub_institution
-select a.work_id, a.institution_seq, c.institution_id, institution_ror_id = c.ror_id, [weight] = sum([weight])
+select a.work_id, institution_seq = row_number() over (partition by a.work_id order by min(affiliation_institution_seq)), a.institution_id, [weight] = sum(a.[weight] * b.[weight])
 into #pub_institution
-from #pub_author_institution as a
-join openalex_2023nov..work_institution as b on a.work_id = b.work_id and a.institution_seq = b.institution_seq
-join openalex_2023nov..institution as c on b.institution_id = c.institution_id
-group by a.work_id, a.institution_seq, c.institution_id, c.ror_id
---62959122
+from #pub_affiliation_institution2 as a
+join #pub_affiliation as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq
+group by a.work_id, a.institution_id
 
 -- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_institution) - (select sum([weight]) from #pub_author_institution)) > 0.001
+if abs((select sum([weight]) from #pub_institution) - (select sum([weight]) from #pub_affiliation)) > 0.001
 begin
 	raiserror('Unexpected total weight.', 2, 1)
 end
+
+drop table if exists #pub_institution2
+select a.work_id, a.institution_seq, a.institution_id, institution_ror_id = b.ror_id, a.[weight]
+into #pub_institution2
+from #pub_institution as a
+join openalex_2024aug..institution as b on a.institution_id = b.institution_id
+where b.ror_id is not null
 
 
 
@@ -239,14 +263,12 @@ select
 	affiliated_organization_weight
 from university_affiliated_organization
 where relation_type in ('component', 'joint')
---4326
 
 drop table if exists #pub_unified_institution_child_organizations
 select a.work_id, a.institution_seq, b.unified_institution_ror_id, [weight] = a.[weight] * b.[weight]
 into #pub_unified_institution_child_organizations
-from #pub_institution as a
+from #pub_institution2 as a
 join #unified_institution_child_organizations as b on a.institution_ror_id = b.institution_ror_id
---35435652
 
 
 
@@ -259,12 +281,11 @@ select distinct
 into #unified_institution_associated_organizations
 from university_affiliated_organization
 where relation_type = 'associated'
---2147
 
 drop table if exists #pub_unified_institution_associated_organizations
 select a.work_id, a.institution_seq, b.unified_institution_ror_id, [weight] = a.[weight]
 into #pub_unified_institution_associated_organizations
-from #pub_institution as a
+from #pub_institution2 as a
 join #unified_institution_associated_organizations as b on a.institution_ror_id = b.institution_ror_id
 join
 (
@@ -277,7 +298,6 @@ left join
 	from #pub_unified_institution_child_organizations
 ) as d on a.work_id = d.work_id and a.institution_seq = d.institution_seq
 where d.work_id is null
---1907289
 
 drop table if exists #pub_unified_institution_associated_organizations2
 select a.work_id, a.institution_seq, a.unified_institution_ror_id, [weight] = (cast(1 as float) / b.n_organizations) * a.[weight]
@@ -289,7 +309,6 @@ join
 	from #pub_unified_institution_associated_organizations
 	group by work_id, institution_seq
 ) as b on a.work_id = b.work_id and a.institution_seq = b.institution_seq
---1907289
 
 
 
@@ -305,7 +324,7 @@ select
 	unified_institution_ror_id = isnull(b.unified_institution_ror_id, a.institution_ror_id),
 	[weight] = isnull(b.[weight], a.[weight])
 into #pub_unified_institution
-from #pub_institution as a
+from #pub_institution2 as a
 left join
 (
 	select work_id, institution_seq, unified_institution_ror_id, [weight]
@@ -314,10 +333,9 @@ left join
 	select work_id, institution_seq, unified_institution_ror_id, [weight]
 	from #pub_unified_institution_associated_organizations2
 ) as b on a.work_id = b.work_id and a.institution_seq = b.institution_seq
---63312574
 
 -- Check if the weights add up to the expected value.
-if abs((select sum([weight]) from #pub_unified_institution) - (select sum([weight]) from #pub_institution)) > 0.001
+if abs((select sum([weight]) from #pub_unified_institution) - (select sum([weight]) from #pub_institution2)) > 0.001
 begin
 	raiserror('Unexpected total weight.', 2, 1)
 end
@@ -340,7 +358,6 @@ from #pub_unified_institution as a
 join university as b on a.unified_institution_ror_id = b.ror_id
 where university_id is not null
 group by a.work_id, b.university_id
---33257094
 
 alter table pub_university add constraint pk_pub_university primary key(work_id, university_id)
 
@@ -362,11 +379,10 @@ from pub
 union
 select a.work_id, main_field_id = d.main_field_id, d.[weight]
 from pub as a
-join openalex_2023nov_indicators..pub as b on a.work_id = b.work_id
-join openalex_2023nov_indicators..pub_classification_system_research_area as c on b.work_id = c.work_id
-join openalex_2023nov_classification..micro_cluster_main_field as d on c.research_area_no = d.micro_cluster_id
+join openalex_2024aug_indicators..pub as b on a.work_id = b.work_id
+join openalex_2024aug_indicators..pub_classification_system_research_area as c on b.work_id = c.work_id
+join openalex_2024aug_classification..micro_cluster_main_field as d on c.research_area_no = d.micro_cluster_id
 where c.classification_system_no = 2
---60772186
 
 alter table pub_main_field add constraint pk_pub_main_field primary key(work_id, main_field_id)
 
@@ -374,7 +390,7 @@ alter table pub_main_field add constraint pk_pub_main_field primary key(work_id,
 
 -- Calculate impact, collaboration, and open access indicators for each publication-period combination.
 
-use openalex_2023nov_indicators
+use openalex_2024aug_indicators
 
 drop table if exists #pub_period_indicators
 create table #pub_period_indicators
@@ -402,7 +418,7 @@ create table #pub_period_indicators
 declare @pub_table as pub_table
 insert @pub_table(work_id)
 select work_id
-from leiden_ranking_open_edition_2023..pub
+from leiden_ranking_open_edition_2024..pub
 
 declare @pub_indicators_table as pub_indicators_table
 
@@ -499,7 +515,7 @@ begin
 		b.p_green_oa,
 		b.p_oa_unknown
 	into #pub_indicators
-	from leiden_ranking_open_edition_2023..pub as a
+	from leiden_ranking_open_edition_2024..pub as a
 	join #pub_indicators1 as b on a.work_id = b.work_id
 	join #pub_indicators2 as c on a.work_id = c.work_id
 	join #pub_indicators3 as d on a.work_id = d.work_id
@@ -512,7 +528,7 @@ begin
 	set @period_begin_year += 1
 end
 
-use leiden_ranking_open_edition_2023
+use leiden_ranking_open_edition_2024
 
 
 
@@ -522,48 +538,42 @@ use leiden_ranking_open_edition_2023
 drop table if exists #country
 select country_iso_alpha2_code, cleaned_country_iso_alpha2_code = country_iso_alpha2_code
 into #country
-from openalex_2023nov..country
+from openalex_2024aug..country
 where country_iso_alpha2_code not in ('cn', 'hk', 'mo')  -- China, Hong Kong, Macao
 union
 select country_iso_alpha2_code, 'cn'
-from openalex_2023nov..country
+from openalex_2024aug..country
 where country_iso_alpha2_code in ('cn', 'hk', 'mo')  -- China, Hong Kong, Macao
---251
 
 drop table if exists #pub_country
-select a.work_id, d.cleaned_country_iso_alpha2_code
+select a.work_id, c.cleaned_country_iso_alpha2_code
 into #pub_country
-from pub as a
-join openalex_2023nov..work_institution as b on a.work_id = b.work_id
-join openalex_2023nov..institution as c on b.institution_id = c.institution_id
-join #country as d on c.country_iso_alpha2_code = d.country_iso_alpha2_code
+from #pub_institution2 as a
+join openalex_2024aug..institution as b on a.institution_id = b.institution_id
+join #country as c on b.country_iso_alpha2_code = c.country_iso_alpha2_code
 union
 select a.work_id, c.cleaned_country_iso_alpha2_code
 from pub as a
-join openalex_2023nov..work_author_country as b on a.work_id = b.work_id
+join openalex_2024aug..work_author_country as b on a.work_id = b.work_id
 join #country as c on b.country_iso_alpha2_code = c.country_iso_alpha2_code 
---35672377
 
 drop table if exists #pub_n_countries
 select work_id, n_countries = count(distinct cleaned_country_iso_alpha2_code)
 into #pub_n_countries
 from #pub_country
 group by work_id
---26454461
 
 drop table if exists #pub_int_collab
 select a.work_id, p_int_collab = cast(case when b.n_countries > 1 then 1 else 0 end as float)
 into #pub_int_collab
 from pub as a
 left join #pub_n_countries as b on a.work_id = b.work_id
---26603958
 
 drop table if exists #pub_n_unified_institutions
 select work_id, n_unified_institution = count(distinct unified_institution_ror_id)
 into #pub_n_unified_institutions
 from #pub_unified_institution
 group by work_id
---26082617
 
 drop table if exists #pub_collab
 select a.work_id, p_collab = cast(case when b.n_unified_institution > 1 or c.n_countries > 1 then 1 else 0 end as float)
@@ -571,7 +581,6 @@ into #pub_collab
 from pub as a
 left join #pub_n_unified_institutions as b on a.work_id = b.work_id
 left join #pub_n_countries as c on a.work_id = c.work_id
---26603958
 
 
 
@@ -580,16 +589,15 @@ left join #pub_n_countries as c on a.work_id = c.work_id
 drop table if exists #pub_oa
 select
 	a.work_id,
-	p_gold_oa = cast((case when c.oa_status = 'gold' then 1 else 0 end) as float),
+	p_gold_oa = cast((case when c.oa_status in ('gold', 'diamond') then 1 else 0 end) as float),
 	p_hybrid_oa = cast((case when c.oa_status = 'hybrid' then 1 else 0 end) as float),
 	p_bronze_oa = cast((case when c.oa_status = 'bronze' then 1 else 0 end) as float),
 	p_green_oa = cast((case when c.oa_status = 'green' then 1 else 0 end) as float),
 	p_oa_unknown = cast((case when c.oa_status is null then 1 else 0 end) as float)
 into #pub_oa
 from pub as a
-join openalex_2023nov..work as b on a.work_id = b.work_id
-left join openalex_2023nov..oa_status as c on b.oa_status_id = c.oa_status_id
---26603958
+join openalex_2024aug..work as b on a.work_id = b.work_id
+left join openalex_2024aug..oa_status as c on b.oa_status_id = c.oa_status_id
 
 
 
@@ -622,7 +630,6 @@ from #pub_period_indicators as a
 join #pub_collab as b on a.work_id = b.work_id
 join #pub_int_collab as c on a.work_id = c.work_id
 join #pub_oa as d on a.work_id = d.work_id
---85167701
 
 
 
@@ -644,7 +651,6 @@ create table pub_period_impact_indicators
 insert into pub_period_impact_indicators with(tablock)
 select work_id, period_begin_year, cs, ncs, p_top_1, p_top_5, p_top_10, p_top_50
 from #pub_period_indicators2
---85167701
 
 alter table pub_period_impact_indicators add constraint pk_pub_period_impact_indicators primary key(work_id, period_begin_year)
 
@@ -666,7 +672,6 @@ create table pub_collab_indicators
 insert into pub_collab_indicators with(tablock)
 select distinct work_id, p_collab, p_int_collab, p_industry, p_short_dist_collab, p_long_dist_collab
 from #pub_period_indicators2
---26603958
 
 alter table pub_collab_indicators add constraint pk_pub_collab_indicators primary key(work_id)
 
@@ -689,7 +694,6 @@ create table pub_oa_indicators
 insert into pub_oa_indicators with(tablock)
 select distinct work_id, p_oa_unknown, p_oa, p_gold_oa, p_hybrid_oa, p_bronze_oa, p_green_oa
 from #pub_period_indicators2
---26603958
 
 alter table pub_oa_indicators add constraint pk_pub_oa_indicators primary key(work_id)
 
@@ -727,7 +731,6 @@ into #pub_university_main_field_period_indicators
 from pub_university as a
 join pub_main_field as b on a.work_id = b.work_id
 join #pub_period_indicators2 as c on a.work_id = c.work_id
---240738180
 
 drop table if exists #university_main_field_period
 select
@@ -739,7 +742,6 @@ into #university_main_field_period
 from university as a
 cross join main_field as b
 cross join [period] as c
---110058
 
 drop table if exists #university_main_field_period2
 select
@@ -759,7 +761,6 @@ left join
 ) as b on a.university_id = b.university_id
 	and a.main_field_id = b.main_field_id
 	and a.period_begin_year = b.period_begin_year
---110058
 
 drop table if exists #university_main_field_period_indicators_frac
 create table #university_main_field_period_indicators_frac
@@ -983,7 +984,6 @@ select
 	pp_top_50_ub = b.p_top_50_ub
 from #university_main_field_period2 as a
 left join #university_main_field_period_indicators_full as b on a.university_main_field_begin_year_no = b.university_main_field_begin_year_no
---110058
 
 -- Fractional counting.
 insert into university_main_field_period_impact_indicators with(tablock)
@@ -1019,7 +1019,6 @@ select
 	pp_top_50_ub = b.p_top_50_ub
 from #university_main_field_period2 as a
 left join #university_main_field_period_indicators_frac as b on a.university_main_field_begin_year_no = b.university_main_field_begin_year_no
---110058
 
 alter table university_main_field_period_impact_indicators add constraint pk_university_main_field_period_impact_indicators primary key(university_id, main_field_id, period_begin_year, fractional_counting)
 
@@ -1084,7 +1083,6 @@ select
 	pp_long_dist_collab_ub = b.p_long_dist_collab_ub
 from #university_main_field_period2 as a
 left join #university_main_field_period_indicators_full as b on a.university_main_field_begin_year_no = b.university_main_field_begin_year_no
---110058
 
 alter table university_main_field_period_collab_indicators add constraint pk_university_main_field_period_collab_indicators primary key(university_id, main_field_id, period_begin_year)
 
@@ -1157,6 +1155,5 @@ select
 	pp_green_oa_ub = b.p_green_oa_ub
 from #university_main_field_period2 as a
 left join #university_main_field_period_indicators_full as b on a.university_main_field_begin_year_no = b.university_main_field_begin_year_no
---110058
 
 alter table university_main_field_period_oa_indicators add constraint pk_university_main_field_period_oa_indicators primary key(university_id, main_field_id, period_begin_year)
