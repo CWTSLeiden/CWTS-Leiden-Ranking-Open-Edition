@@ -1,9 +1,9 @@
-use leiden_ranking_open_edition_2025
+use leiden_ranking_open_edition_2026
 go
 
 declare @period_n_years int = 4
 declare @first_period_begin_year int = 2006
-declare @last_period_begin_year int = 2020
+declare @last_period_begin_year int = 2021
 declare @last_period_end_year int = @last_period_begin_year + @period_n_years - 1
 
 
@@ -44,26 +44,24 @@ select 0, 'All sciences'
 
 insert into main_field with(tablock)
 select main_field_id, main_field
-from openalex_2025aug_classification..main_field
+from openalex_2026aug_classification..main_field
 
 alter table main_field add constraint pk_main_field primary key(main_field_id)
 
 
 
 -- Create publication table. Each row in this table represents a publication.
--- Only articles, reviews, and book chapters published in journals, book series, standalone books, and conference proceedings are included.
--- Publications must not be retracted and must contain sufficient metadata (i.e., source, authors, affiliations, references).
+-- Only articles, reviews, data papers, software papers, conference papers, and book chapters published in journals, book series, standalone books, and conference proceedings are included.
+-- Publications must not be retracted and must contain sufficient metadata (i.e., publication year, source, authors, affiliations, references).
 
 drop table if exists #pub
-select a.work_id, a.pub_year, is_core_pub = b.is_core_work, micro_cluster_id = d.research_area_no
+select a.work_id, a.pub_year, is_core_pub = a.is_cwts_core_pub, micro_cluster_id = b.research_area_no
 into #pub
-from openalex_2025aug..work as a
-join openalex_2025aug_core..work as b on a.work_id = b.work_id
-join openalex_2025aug_indicators..pub as c on a.work_id = c.work_id
-join openalex_2025aug_indicators..pub_classification_system_research_area as d on a.work_id = d.work_id
+from openalex_2026aug_indicators..pub as a
+join openalex_2026aug_indicators..pub_classification_system_research_area as b on a.work_id = b.work_id
 where a.pub_year between @first_period_begin_year and @last_period_end_year
-	and c.doc_type_no <> 1
-	and d.classification_system_no = 2
+	and a.is_cwts_extended_pub = 1
+	and b.classification_system_no = 2
 
 drop table if exists pub
 create table pub
@@ -99,7 +97,7 @@ from #pub
 union
 select a.work_id, main_field_id = b.main_field_id, b.[weight]
 from #pub as a
-join openalex_2025aug_classification..micro_cluster_main_field as b on a.micro_cluster_id = b.micro_cluster_id
+join openalex_2026aug_classification..micro_cluster_main_field as b on a.micro_cluster_id = b.micro_cluster_id
 
 alter table pub_main_field add constraint pk_pub_main_field primary key(work_id, main_field_id)
 
@@ -110,7 +108,7 @@ alter table pub_main_field add constraint pk_pub_main_field primary key(work_id,
 drop table if exists #institution_ror_id
 select a.institution_id, a.ror_id
 into #institution_ror_id
-from openalex_2025aug..institution as a
+from openalex_2026aug..institution as a
 where a.ror_id is not null
 
 delete from a
@@ -125,7 +123,7 @@ join
 left join
 (
 	select distinct institution_id
-	from openalex_2025aug..work_affiliation_institution
+	from openalex_2026aug..work_affiliation_institution
 ) as c on a.institution_id = c.institution_id
 where c.institution_id is null
 
@@ -135,7 +133,7 @@ into #university
 from
 (
 	select distinct university_id = cwts_organization_id, university_ror_id = ror_id
-	from projectdb_leiden_ranking_open_edition..LROE2025_university_affiliated_organization_20251024
+	from projectdb_leiden_ranking_open_edition..LROE2026_university_affiliated_organization
 ) as a
 join #institution_ror_id as b on a.university_ror_id = b.ror_id
 
@@ -162,7 +160,7 @@ select distinct
 	affiliated_organization_ror_id = a.affiliated_organization_ror_id,
 	affiliated_organization_openalex_institution_id = c.institution_id,
 	affiliated_organization_weight = a.affiliated_organization_weight
-from projectdb_leiden_ranking_open_edition..LROE2025_university_affiliated_organization_20251024 as a
+from projectdb_leiden_ranking_open_edition..LROE2026_university_affiliated_organization as a
 join #institution_ror_id as b on a.ror_id = b.ror_id
 join #institution_ror_id as c on a.affiliated_organization_ror_id = c.ror_id
 where a.ror_id <> a.affiliated_organization_ror_id
@@ -178,7 +176,7 @@ create table affiliated_organization
 (
 	affiliated_organization_ror_id char(9) not null,
 	affiliated_organization_openalex_institution_id bigint not null,
-	affiliated_organization_ror_name varchar(150) not null
+	affiliated_organization_ror_name varchar(200) not null
 )
 
 insert into affiliated_organization with(tablock)
@@ -188,7 +186,7 @@ from
 	select distinct affiliated_organization_ror_id, affiliated_organization_openalex_institution_id
 	from university_affiliated_organization
 ) as a
-left join ror_2025aug..organization as b on a.affiliated_organization_ror_id = b.ror_id
+left join ror_2026aug..organization as b on a.affiliated_organization_ror_id = b.ror_id
 
 alter table affiliated_organization add constraint pk_affiliated_organization primary key(affiliated_organization_ror_id)
 
@@ -199,21 +197,21 @@ alter table affiliated_organization add constraint pk_affiliated_organization pr
 drop table if exists #pub_n_authors
 select a.work_id, n_authors = count(*)
 into #pub_n_authors
-from openalex_2025aug..work_author as a 
+from openalex_2026aug..work_author as a 
 join pub as b on a.work_id = b.work_id
 group by a.work_id
 
 drop table if exists #pub_author_affiliation
 select a.work_id, a.author_seq, a.affiliation_seq, [weight] = cast(1 as float) / (b.n_authors * count(*) over (partition by a.work_id, a.author_seq))
 into #pub_author_affiliation
-from openalex_2025aug..work_author_affiliation as a
+from openalex_2026aug..work_author_affiliation as a
 join #pub_n_authors as b on a.work_id = b.work_id
 
 drop table if exists #pub_author_affiliation_institution
 select a.work_id, a.author_seq, a.affiliation_seq, b.institution_id, [weight] = a.[weight] * cast(1 as float) / count(*) over (partition by a.work_id, a.author_seq, a.affiliation_seq)
 into #pub_author_affiliation_institution
 from #pub_author_affiliation as a
-join openalex_2025aug..work_affiliation_institution as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq 
+join openalex_2026aug..work_affiliation_institution as b on a.work_id = b.work_id and a.affiliation_seq = b.affiliation_seq 
 
 
 
@@ -257,13 +255,13 @@ where relation_type = 'associated'
 drop table if exists #pub_author_affiliation_unified_institution_associated_organizations
 select a.work_id, a.author_seq, a.affiliation_seq, a.institution_id, b.unified_institution_id, [weight] = a.[weight] * cast(1 as float) / count(*) over (partition by a.work_id, a.author_seq, a.affiliation_seq, a.institution_id)
 into #pub_author_affiliation_unified_institution_associated_organizations
-from #pub_author_affiliation_institution a
-join #unified_institution_associated_organizations b on a.institution_id = b.institution_id
+from #pub_author_affiliation_institution as a
+join #unified_institution_associated_organizations as b on a.institution_id = b.institution_id
 join 
 (
 	select distinct work_id, unified_institution_id
 	from #pub_author_affiliation_unified_institution_child_organizations
-) c on a.work_id = c.work_id and b.unified_institution_id = c.unified_institution_id
+) as c on a.work_id = c.work_id and b.unified_institution_id = c.unified_institution_id
 
 
 
@@ -317,7 +315,7 @@ drop table if exists university
 create table university
 (
 	university_id int not null,
-	university nvarchar(60) not null,
+	university nvarchar(100) not null,
 	university_full_name nvarchar(130) not null,
 	university_ror_id char(9) not null,
 	university_ror_name nvarchar(130) not null,
@@ -340,8 +338,8 @@ select
 	a.latitude,
 	a.longitude,
 	a.is_mtor_university
-from projectdb_leiden_ranking_open_edition..LROE2025_university_20251024 as a
-left join ror_2025aug..organization as b on a.ror_id = b.ror_id
+from projectdb_leiden_ranking_open_edition..LROE2026_university as a
+left join ror_2026aug..organization as b on a.ror_id = b.ror_id
 left join #institution_ror_id as c on a.ror_id = c.ror_id
 join #university_n_pubs as d on a.ror_id = d.university_ror_id
 
@@ -374,23 +372,23 @@ alter table pub_university add constraint pk_pub_university primary key(work_id,
 drop table if exists #country
 select country_iso_alpha2_code, cleaned_country_iso_alpha2_code = country_iso_alpha2_code
 into #country
-from openalex_2025aug..country
+from openalex_2026aug..country
 where country_iso_alpha2_code not in ('cn', 'hk', 'mo')  -- China, Hong Kong, Macao
 union
 select country_iso_alpha2_code, 'cn'
-from openalex_2025aug..country
+from openalex_2026aug..country
 where country_iso_alpha2_code in ('cn', 'hk', 'mo')  -- China, Hong Kong, Macao
 
 drop table if exists #pub_country
 select a.work_id, c.cleaned_country_iso_alpha2_code
 into #pub_country
 from #pub_author_affiliation_unified_institution as a
-join openalex_2025aug..institution as b on a.institution_id = b.institution_id
+join openalex_2026aug..institution as b on a.institution_id = b.institution_id
 join #country as c on b.country_iso_alpha2_code = c.country_iso_alpha2_code
 union
 select a.work_id, c.cleaned_country_iso_alpha2_code
 from pub as a
-join openalex_2025aug..work_author_country as b on a.work_id = b.work_id
+join openalex_2026aug..work_author_country as b on a.work_id = b.work_id
 join #country as c on b.country_iso_alpha2_code = c.country_iso_alpha2_code 
 
 drop table if exists #pub_n_countries
@@ -443,7 +441,7 @@ select
 	p_long_dist_collab = cast((case when a.p_collab > 0 and c.gcd >= 5000 then 1 else 0 end) as float)
 from #pub_collab as a
 join #pub_int_collab as b on a.work_id = b.work_id
-join openalex_2025aug_indicators..pub as c on a.work_id = c.work_id
+join openalex_2026aug_indicators..pub as c on a.work_id = c.work_id
 
 alter table pub_collab_indicators add constraint pk_pub_collab_indicators primary key(work_id)
 
@@ -461,8 +459,8 @@ select
 	p_oa_unknown = cast((case when c.oa_status is null then 1 else 0 end) as float)
 into #pub_oa
 from pub as a
-join openalex_2025aug..work as b on a.work_id = b.work_id
-left join openalex_2025aug..oa_status as c on b.oa_status_id = c.oa_status_id
+join openalex_2026aug..work as b on a.work_id = b.work_id
+left join openalex_2026aug..oa_status as c on b.oa_status_id = c.oa_status_id
 
 
 
@@ -494,7 +492,7 @@ alter table pub_oa_indicators add constraint pk_pub_oa_indicators primary key(wo
 
 -- Calculate impact, collaboration, and open access indicators for the set of core publications.
 
-use openalex_2025aug_indicators
+use openalex_2026aug_indicators
 
 drop table if exists #pub_period_indicators_core_pubs
 create table #pub_period_indicators_core_pubs
@@ -526,7 +524,7 @@ create table #pub_period_indicators_core_pubs
 declare @pub_table as pub_table
 insert @pub_table(work_id)
 select work_id
-from leiden_ranking_open_edition_2025..pub
+from leiden_ranking_open_edition_2026..pub
 where is_core_pub = 1
 
 declare @pub_indicators_table as pub_indicators_table
@@ -543,7 +541,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 2,
+		@database_no = 3,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -560,7 +558,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 2,
+		@database_no = 3,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -577,7 +575,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 2,
+		@database_no = 3,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -594,7 +592,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 2,
+		@database_no = 3,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -632,7 +630,7 @@ begin
 		b.p_green_oa,
 		b.p_oa_unknown
 	into #pub_indicators
-	from leiden_ranking_open_edition_2025..pub as a
+	from leiden_ranking_open_edition_2026..pub as a
 	join #pub_indicators1 as b on a.work_id = b.work_id
 	join #pub_indicators2 as c on a.work_id = c.work_id
 	join #pub_indicators3 as d on a.work_id = d.work_id
@@ -679,7 +677,7 @@ create table #pub_period_indicators_all_pubs
 delete @pub_table
 insert @pub_table(work_id)
 select work_id
-from leiden_ranking_open_edition_2025..pub
+from leiden_ranking_open_edition_2026..pub
 
 set @period_begin_year = @first_period_begin_year
 while @period_begin_year <= @last_period_begin_year
@@ -691,7 +689,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 1,
+		@database_no = 2,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -708,7 +706,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 1,
+		@database_no = 2,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -725,7 +723,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 1,
+		@database_no = 2,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -742,7 +740,7 @@ begin
 	insert @pub_indicators_table
 	exec calc_indicators_pubs
 		@pub_table = @pub_table,
-		@database_no = 1,
+		@database_no = 2,
 		@classification_system_no = 2,
 		@pub_window_begin = @period_begin_year,
 		@pub_window_end = @end_year,
@@ -780,7 +778,7 @@ begin
 		b.p_green_oa,
 		b.p_oa_unknown
 	into #pub_indicators
-	from leiden_ranking_open_edition_2025..pub as a
+	from leiden_ranking_open_edition_2026..pub as a
 	join #pub_indicators1 as b on a.work_id = b.work_id
 	join #pub_indicators2 as c on a.work_id = c.work_id
 	join #pub_indicators3 as d on a.work_id = d.work_id
@@ -793,7 +791,7 @@ begin
 	set @period_begin_year += 1
 end
 
-use leiden_ranking_open_edition_2025
+use leiden_ranking_open_edition_2026
 
 
 
