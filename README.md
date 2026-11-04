@@ -8,5 +8,6 @@ See the following blog posts for more information about the Leiden Ranking Open 
 - [Introducing the Leiden Ranking Open Edition](https://www.leidenmadtrics.nl/articles/introducing-the-leiden-ranking-open-edition)
 - [Launch of the CWTS Leiden Ranking Open Edition 2024](https://www.leidenmadtrics.nl/articles/launch-of-the-cwts-leiden-ranking-open-edition-2024)
 - [The CWTS Leiden Ranking 2025 - More open, more inclusive, more informative](https://www.leidenmadtrics.nl/articles/the-cwts-leiden-ranking-2025-more-open-more-inclusive-more-informative)
+- [The CWTS Leiden Ranking 2026 – Final release of the Traditional Edition](https://www.leidenmadtrics.nl/the-cwts-leiden-ranking-2026-final-release-of-the-traditional-edition)
 
 This repository makes use of the [CWTS OpenAlex databases](https://github.com/CWTSLeiden/CWTS-OpenAlex-databases) repository.
